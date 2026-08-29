@@ -26,6 +26,8 @@ interface VoiceOrbProps {
   interimTranscript?: string;
   isPressed?: boolean;
   roomsState?: AllRoomsState;
+  audioLevel?: number; // 0 to 100 volume level
+  mode?: 'toggle' | 'hold';
 }
 
 const HOUSE_ZONES = [
@@ -40,12 +42,12 @@ const HOUSE_ZONES = [
   { id: 'hallway', name: 'Hallway', icon: Radio, endpoint: 'Central HVAC Duct' },
 ];
 
-export function VoiceOrb({ state, interimTranscript, isPressed, roomsState }: VoiceOrbProps) {
+export function VoiceOrb({ state, interimTranscript, isPressed, roomsState, audioLevel = 0 }: VoiceOrbProps) {
   const isListening = isPressed || state === 'listening';
   const isThinking = state === 'thinking';
 
-  // Dynamic waveform bars for listening state
-  const waveformHeights = [14, 28, 42, 20, 36, 48, 24, 40, 18, 32, 46, 22, 38, 16];
+  // Dynamic waveform bars for listening state with live reactive audioLevel scaling
+  const baseWaveformHeights = [14, 28, 42, 20, 36, 48, 24, 40, 18, 32, 46, 22, 38, 16];
 
   return (
     <div id="home-voice-zone-console" className="w-full flex flex-col items-center">
@@ -72,32 +74,38 @@ export function VoiceOrb({ state, interimTranscript, isPressed, roomsState }: Vo
 
         {/* Live Acoustic Frequency Waveform (Active during listening/thinking) */}
         <div className="flex items-center gap-1 h-6">
-          {waveformHeights.map((height, i) => (
-            <motion.div
-              key={i}
-              className={`w-1 rounded-full transition-colors ${
-                isListening
-                  ? 'bg-sky-400'
-                  : isThinking
-                  ? 'bg-amber-400'
-                  : 'bg-slate-700'
-              }`}
-              animate={{
-                height: isListening
-                  ? [height * 0.4, height, height * 0.3]
-                  : isThinking
-                  ? [height * 0.3, height * 0.7, height * 0.4]
-                  : 4,
-                opacity: isListening ? [0.6, 1, 0.6] : isThinking ? 0.8 : 0.3,
-              }}
-              transition={{
-                repeat: Infinity,
-                duration: isListening ? 0.6 + (i % 5) * 0.1 : 1.2,
-                ease: 'easeInOut',
-                delay: i * 0.04,
-              }}
-            />
-          ))}
+          {baseWaveformHeights.map((height, i) => {
+            const dynamicScale = Math.max(0.25, Math.min(1.8, audioLevel > 5 ? (audioLevel / 45) : 0.4));
+            const calculatedHeight = isListening ? Math.max(6, Math.min(26, height * dynamicScale * 0.55)) : 4;
+            return (
+              <motion.div
+                key={i}
+                className={`w-1 rounded-full transition-all duration-75 ${
+                  isListening
+                    ? audioLevel > 15
+                      ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]'
+                      : 'bg-sky-400'
+                    : isThinking
+                    ? 'bg-amber-400'
+                    : 'bg-slate-700'
+                }`}
+                animate={{
+                  height: isListening
+                    ? calculatedHeight
+                    : isThinking
+                    ? [height * 0.3, height * 0.7, height * 0.4]
+                    : 4,
+                  opacity: isListening ? (audioLevel > 5 ? 1 : 0.7) : isThinking ? 0.8 : 0.3,
+                }}
+                transition={{
+                  repeat: isThinking ? Infinity : 0,
+                  duration: isThinking ? 1.2 : 0.1,
+                  ease: 'easeInOut',
+                  delay: isThinking ? i * 0.04 : 0,
+                }}
+              />
+            );
+          })}
         </div>
       </div>
 

@@ -26,55 +26,55 @@ export function LiveDeviceMonitor({ roomsState }: LiveDeviceMonitorProps) {
       label: 'Front Main Door',
       location: 'Living Room',
       icon: roomsState.livingRoom.mainDoorOpen ? DoorOpen : DoorClosed,
-      value: roomsState.livingRoom.mainDoorOpen ? 'UNLOCKED / OPEN' : 'SECURED / CLOSED',
+      value: roomsState.livingRoom.mainDoorOpen ? 'Unlocked / Open' : 'Secured / Closed',
       active: roomsState.livingRoom.mainDoorOpen,
-      badgeColor: roomsState.livingRoom.mainDoorOpen ? 'text-amber-400 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10',
+      badgeColor: roomsState.livingRoom.mainDoorOpen ? 'text-amber-300 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10',
     },
     {
       label: 'Garage Door',
       location: 'Garage',
       icon: roomsState.garage.garageDoorOpen ? DoorOpen : DoorClosed,
-      value: roomsState.garage.garageDoorOpen ? 'OPEN' : 'CLOSED',
+      value: roomsState.garage.garageDoorOpen ? 'Open' : 'Closed',
       active: roomsState.garage.garageDoorOpen,
-      badgeColor: roomsState.garage.garageDoorOpen ? 'text-amber-400 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10',
+      badgeColor: roomsState.garage.garageDoorOpen ? 'text-amber-300 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10',
     },
     {
       label: 'Kitchen Window',
       location: 'Kitchen',
       icon: Wind,
-      value: roomsState.kitchen.windowOpen ? 'OPEN' : 'SHUT',
+      value: roomsState.kitchen.windowOpen ? 'Open' : 'Closed',
       active: roomsState.kitchen.windowOpen,
-      badgeColor: roomsState.kitchen.windowOpen ? 'text-amber-400 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10',
+      badgeColor: roomsState.kitchen.windowOpen ? 'text-amber-300 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10',
     },
     {
       label: 'Living Climate (AC)',
       location: 'Living Room',
       icon: Thermometer,
-      value: roomsState.livingRoom.acPower ? `${roomsState.livingRoom.acTemp}°F (ACTIVE)` : 'OFF',
+      value: roomsState.livingRoom.acPower ? `${roomsState.livingRoom.acTemp}°F` : 'Off',
       active: roomsState.livingRoom.acPower,
-      badgeColor: roomsState.livingRoom.acPower ? 'text-blue-400 bg-blue-500/10' : 'text-slate-400 bg-white/5',
+      badgeColor: roomsState.livingRoom.acPower ? 'text-sky-300 bg-sky-500/10' : 'text-slate-400 bg-white/5',
     },
     {
       label: 'Master AC',
       location: 'Bedroom Main',
       icon: Thermometer,
-      value: roomsState.bedroomMain.acPower ? `${roomsState.bedroomMain.acTemp}°F (ACTIVE)` : 'OFF',
+      value: roomsState.bedroomMain.acPower ? `${roomsState.bedroomMain.acTemp}°F` : 'Off',
       active: roomsState.bedroomMain.acPower,
-      badgeColor: roomsState.bedroomMain.acPower ? 'text-blue-400 bg-blue-500/10' : 'text-slate-400 bg-white/5',
+      badgeColor: roomsState.bedroomMain.acPower ? 'text-sky-300 bg-sky-500/10' : 'text-slate-400 bg-white/5',
     },
     {
       label: 'Living Ceiling Fan',
       location: 'Living Room',
       icon: Fan,
-      value: roomsState.livingRoom.fanPower ? `${roomsState.livingRoom.fanSpeed}% (${roomsState.livingRoom.fanMode})` : 'OFF',
+      value: roomsState.livingRoom.fanPower ? `${roomsState.livingRoom.fanSpeed}% (${roomsState.livingRoom.fanMode})` : 'Off',
       active: roomsState.livingRoom.fanPower,
-      badgeColor: roomsState.livingRoom.fanPower ? 'text-cyan-400 bg-cyan-500/10' : 'text-slate-400 bg-white/5',
+      badgeColor: roomsState.livingRoom.fanPower ? 'text-cyan-300 bg-cyan-500/10' : 'text-slate-400 bg-white/5',
     },
     {
       label: 'Master Lights',
       location: 'Bedroom Main',
       icon: Lightbulb,
-      value: roomsState.bedroomMain.lightPower ? 'ON' : 'OFF',
+      value: roomsState.bedroomMain.lightPower ? 'On' : 'Off',
       active: roomsState.bedroomMain.lightPower,
       badgeColor: roomsState.bedroomMain.lightPower ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400 bg-white/5',
     },
@@ -82,7 +82,7 @@ export function LiveDeviceMonitor({ roomsState }: LiveDeviceMonitorProps) {
       label: 'Dining Chandelier',
       location: 'Dining Room',
       icon: Lightbulb,
-      value: roomsState.diningRoom.lightPower ? 'ON' : 'OFF',
+      value: roomsState.diningRoom.lightPower ? 'On' : 'Off',
       active: roomsState.diningRoom.lightPower,
       badgeColor: roomsState.diningRoom.lightPower ? 'text-amber-300 bg-amber-500/10' : 'text-slate-400 bg-white/5',
     },
@@ -93,12 +93,12 @@ export function LiveDeviceMonitor({ roomsState }: LiveDeviceMonitorProps) {
       <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-sky-400" />
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+          <h3 className="text-sm font-semibold text-slate-200">
             Connected Endpoints
           </h3>
         </div>
-        <span className="text-xs font-mono text-slate-400">
-          8 Active Monitored
+        <span className="text-xs text-slate-400">
+          8 Monitored
         </span>
       </div>
 

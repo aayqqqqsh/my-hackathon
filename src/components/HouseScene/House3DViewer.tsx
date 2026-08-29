@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { HouseModel } from './HouseModel';
 import { RoomLightSources, ROOM_LIGHT_CONFIGS } from './RoomLightSources';
 import { WeatherEnvironment3D } from './WeatherEnvironment3D';
+import { ErrorBoundary } from '../ErrorBoundary';
 import type { AllRoomsState, WeatherCondition } from '../../types';
 import {
   Compass,
@@ -227,48 +228,50 @@ export function House3DViewer({
     <div className="relative w-full h-[620px] rounded-3xl bg-slate-950/95 border border-slate-800 overflow-hidden shadow-2xl flex flex-col select-none">
       {/* 3D Scene Viewport */}
       <div className="relative w-full flex-1">
-        <Canvas
-          shadows
-          gl={{
-            antialias: true,
-            powerPreference: 'high-performance',
-            toneMapping: THREE.ACESFilmicToneMapping,
-            toneMappingExposure: 1.45,
-          }}
-        >
-          {/* Framed closer so the 14-unit house fills the viewport prominently */}
-          <PerspectiveCamera makeDefault position={[10, 11, 12]} fov={42} />
-          <OrbitControls
-            ref={controlsRef}
-            makeDefault
-            minDistance={3}
-            maxDistance={30}
-            maxPolarAngle={Math.PI / 2 + 0.02}
-            target={[0, 1.2, 0]}
-            enableDamping
-            dampingFactor={0.06}
-          />
-
-          {/* Dynamic Weather Sky & Particles System (Sunny / Rainy / Winter) */}
-          <WeatherEnvironment3D weather={currentWeather} />
-
-          {/* Ground Shadow Floor */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, 0]} receiveShadow>
-            <planeGeometry args={[48, 48]} />
-            <shadowMaterial opacity={0.45} />
-          </mesh>
-
-          <Suspense fallback={null}>
-            {/* The Auto-Fitted and Centered House Model */}
-            <HouseModel
-              customGlbUrl={customGlbUrl}
-              onModelLoaded={(isCustom) => setIsExternalGlbLoaded(isCustom)}
+        <ErrorBoundary fallbackTitle="3D Scene Viewport">
+          <Canvas
+            shadows
+            gl={{
+              antialias: true,
+              powerPreference: 'high-performance',
+              toneMapping: THREE.ACESFilmicToneMapping,
+              toneMappingExposure: 1.45,
+            }}
+          >
+            {/* Framed closer so the 14-unit house fills the viewport prominently */}
+            <PerspectiveCamera makeDefault position={[10, 11, 12]} fov={42} />
+            <OrbitControls
+              ref={controlsRef}
+              makeDefault
+              minDistance={3}
+              maxDistance={30}
+              maxPolarAngle={Math.PI / 2 + 0.02}
+              target={[0, 1.2, 0]}
+              enableDamping
+              dampingFactor={0.06}
             />
 
-            {/* Dynamic Proportional PointLights for every Room Zone (invisible emitters with warm color and wide throw) */}
-            <RoomLightSources roomsState={roomsState} />
-          </Suspense>
-        </Canvas>
+            {/* Dynamic Weather Sky & Particles System (Sunny / Rainy / Winter) */}
+            <WeatherEnvironment3D weather={currentWeather} />
+
+            {/* Ground Shadow Floor */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, 0]} receiveShadow>
+              <planeGeometry args={[48, 48]} />
+              <shadowMaterial opacity={0.45} />
+            </mesh>
+
+            <Suspense fallback={null}>
+              {/* The Auto-Fitted and Centered House Model */}
+              <HouseModel
+                customGlbUrl={customGlbUrl}
+                onModelLoaded={(isCustom) => setIsExternalGlbLoaded(isCustom)}
+              />
+
+              {/* Dynamic Proportional PointLights for every Room Zone (invisible emitters with warm color and wide throw) */}
+              <RoomLightSources roomsState={roomsState} />
+            </Suspense>
+          </Canvas>
+        </ErrorBoundary>
 
         {/* Top Control Overlay Toolbar */}
         <div className="absolute top-4 left-4 right-4 flex flex-wrap items-center justify-between gap-3 pointer-events-none z-10">

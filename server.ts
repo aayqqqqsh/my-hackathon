@@ -227,7 +227,8 @@ function fallbackNLP(transcript: string, currentState: any) {
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
   // Health check
   app.get('/api/health', (_req, res) => {
@@ -357,6 +358,131 @@ Analyze the user's spoken transcript carefully. You must categorize it into ONE 
         ...fallback,
         notice: `API fallback activated: ${err.message || 'Error communicating with model'}`,
         apiKeyPresent: true,
+      });
+    }
+  });
+
+  // Home AI direct Audio processing endpoint (multimodal voice understanding)
+  app.post('/api/home-ai/process-audio', async (req, res) => {
+    try {
+      const { audioBase64, mimeType, currentState, preferences, currentWeather } = req.body;
+
+      if (!audioBase64 || typeof audioBase64 !== 'string') {
+        res.status(400).json({ error: 'audioBase64 string is required' });
+        return;
+      }
+
+      const client = getGenAIClient();
+
+      if (!client) {
+        // When no API key is attached, return clear notice
+        res.json({
+          transcript: '',
+          type: 'chat',
+          message: 'Audio received, but Gemini API key is required to transcribe raw audio on server. You can also use typed commands or speech recognition.',
+          apiKeyPresent: false,
+        });
+        return;
+      }
+
+      const systemInstruction = `You are KeepSafe Home AI, an intelligent home automation system.
+You are receiving an audio clip spoken by the homeowner.
+The home has the following rooms and controllable states:
+- livingRoom: mainDoorOpen (boolean), fanPower (boolean), fanSpeed (number 0-100), fanMode ('off'|'low'|'med'|'high'), acPower (boolean), acTemp (number 60-85)
+- bedroomMain: lightPower (boolean), lamp1Power (boolean), lamp1Intensity (number 0-100), lamp2Power (boolean), lamp2Intensity (number 0-100), acPower (boolean), acTemp (number 60-85)
+- bedroom2: lightPower (boolean), lampPower (boolean), lampIntensity (number 0-100), acPower (boolean), acTemp (number 60-85), fanPower (boolean), fanSpeed (number 0-100), fanMode ('off'|'low'|'med'|'high')
+- bedroom3: lightPower (boolean), lampPower (boolean), lampIntensity (number 0-100), acPower (boolean), acTemp (number 60-85)
+- diningRoom: lightPower (boolean), acPower (boolean), acTemp (number 60-85)
+- kitchen: chimneyPower (boolean), chimneySpeed ('low'|'med'|'high'|'turbo'), windowOpen (boolean)
+- bathroomMain: lightPower (boolean), exhaustFanPower (boolean)
+- bathroom2: lightPower (boolean), exhaustFanPower (boolean)
+- garage: garageDoorOpen (boolean)
+
+Current Weather is: ${currentWeather || 'sunny'}
+Current Home State: ${JSON.stringify(currentState || {})}
+
+Tasks:
+1. Accurately transcribe what the user said into 'transcript'.
+2. Categorize the intent into ONE of:
+   - "command": Execute immediate state changes in 'deviceUpdates' and return a concise 'message'.
+   - "preference": Record a future rule in 'preference' (condition, conditionDescription, deviceUpdates, summary) and return a confirmation 'message'.
+   - "chat": Conversational response or greeting in 'message'.`;
+
+      const audioPart = {
+        inlineData: {
+          mimeType: mimeType || 'audio/webm',
+          data: audioBase64,
+        },
+      };
+
+      const response = await client.models.generateContent({
+        model: 'gemini-3.7-flash',
+        contents: {
+          parts: [
+            audioPart,
+            {
+              text: 'Listen to the audio recording. Transcribe the spoken words and evaluate the smart home action.',
+            },
+          ],
+        },
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              transcript: {
+                type: Type.STRING,
+                description: 'The exact transcribed text spoken in the audio.',
+              },
+              type: {
+                type: Type.STRING,
+                description: 'Must be "command", "preference", or "chat"',
+              },
+              message: {
+                type: Type.STRING,
+                description: 'The natural response message for the user.',
+              },
+              deviceUpdates: {
+                type: Type.OBJECT,
+                description: 'Key-value map of room keys to updated properties.',
+                nullable: true,
+              },
+              preference: {
+                type: Type.OBJECT,
+                description: 'Preference object for "preference" type.',
+                nullable: true,
+                properties: {
+                  condition: { type: Type.STRING },
+                  conditionDescription: { type: Type.STRING },
+                  deviceUpdates: { type: Type.OBJECT },
+                  summary: { type: Type.STRING },
+                },
+              },
+            },
+            required: ['transcript', 'type', 'message'],
+          },
+        },
+      });
+
+      const responseText = response.text || '{}';
+      const parsed = JSON.parse(responseText);
+
+      if (parsed.type === 'preference' && parsed.preference) {
+        parsed.preference.id = `pref-${Date.now()}`;
+        parsed.preference.ruleText = parsed.transcript || 'Spoken Voice Rule';
+      }
+
+      res.json({
+        ...parsed,
+        apiKeyPresent: true,
+      });
+    } catch (err: any) {
+      console.error('Audio processing error:', err);
+      res.status(500).json({
+        error: err.message || 'Failed to process audio',
+        type: 'chat',
+        message: 'Could not recognize the audio clearly. Please try speaking again or typing your command.',
       });
     }
   });

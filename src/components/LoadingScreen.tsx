@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Home, ShieldCheck, Activity } from 'lucide-react';
+import { Home, ShieldCheck, Activity, ArrowRight } from 'lucide-react';
 
 interface LoadingScreenProps {
   onComplete: () => void;
@@ -9,10 +9,16 @@ interface LoadingScreenProps {
 export function LoadingScreen({ onComplete }: LoadingScreenProps) {
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState('Synchronizing spatial sensors...');
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  const handleFinish = () => {
+    onCompleteRef.current();
+  };
 
   useEffect(() => {
     const startTime = Date.now();
-    const duration = 1600; // 1.6s smooth transition
+    const duration = 1100; // 1.1s quick transition
 
     const interval = setInterval(() => {
       const elapsed = Date.now() - startTime;
@@ -31,19 +37,21 @@ export function LoadingScreen({ onComplete }: LoadingScreenProps) {
 
       if (elapsed >= duration) {
         clearInterval(interval);
-        setTimeout(onComplete, 200);
+        setTimeout(() => {
+          onCompleteRef.current();
+        }, 80);
       }
     }, 30);
 
     return () => clearInterval(interval);
-  }, [onComplete]);
+  }, []);
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.98 }}
-      transition={{ duration: 0.3 }}
+      transition={{ duration: 0.25 }}
       className="w-full max-w-3xl mx-auto min-h-[420px] rounded-[32px] bg-white/[0.03] border border-white/10 backdrop-blur-md p-8 sm:p-12 flex flex-col items-center justify-center text-center shadow-2xl relative overflow-hidden"
     >
       {/* Background ambient radar sweep */}
@@ -81,11 +89,21 @@ export function LoadingScreen({ onComplete }: LoadingScreenProps) {
         />
       </div>
 
-      {/* Percentage */}
-      <div className="flex justify-between w-full max-w-md text-xs font-mono text-slate-400">
+      {/* Percentage & Quick Skip */}
+      <div className="flex items-center justify-between w-full max-w-md text-xs font-mono text-slate-400 mb-6">
         <span>SECURITY ENCLAVE ACTIVE</span>
         <span className="text-blue-400 font-semibold">{progress}%</span>
       </div>
+
+      <button
+        id="loading-enter-now-btn"
+        type="button"
+        onClick={handleFinish}
+        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-xs font-mono text-blue-300 hover:text-white transition-all cursor-pointer"
+      >
+        <span>Enter Viewport</span>
+        <ArrowRight className="w-3.5 h-3.5" />
+      </button>
     </motion.div>
   );
 }

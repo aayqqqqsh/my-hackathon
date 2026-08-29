@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { CursorGlow } from './components/CursorGlow';
 import { BackgroundAmbient } from './components/BackgroundAmbient';
 import { IntroOverlay } from './components/IntroOverlay';
@@ -11,6 +11,7 @@ import { HeroAboutSection } from './components/HeroAboutSection';
 import { QuickDashboard } from './components/QuickDashboard';
 import { LoadingScreen } from './components/LoadingScreen';
 import { HomeAIScreen } from './components/HomeAIScreen';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import type {
   AllRoomsState,
   ViewMode,
@@ -112,23 +113,27 @@ export default function App() {
     },
   ]);
 
-  const handleAccessHome = () => {
+  const handleIntroComplete = useCallback(() => {
+    setIntroFinished(true);
+  }, []);
+
+  const handleAccessHome = useCallback(() => {
     setViewMode('loading');
-  };
+  }, []);
 
-  const handleLoadingComplete = () => {
+  const handleLoadingComplete = useCallback(() => {
     setViewMode('layout');
-  };
+  }, []);
 
-  const handleBackToDashboard = () => {
+  const handleBackToDashboard = useCallback(() => {
     setViewMode('dashboard');
-  };
+  }, []);
 
   return (
     <main className="relative min-h-screen bg-[#050505] text-[#e5e5e5] selection:bg-blue-600/30 selection:text-blue-200">
       {/* Intro Animation Gating Access */}
       {!introFinished && (
-        <IntroOverlay onComplete={() => setIntroFinished(true)} />
+        <IntroOverlay onComplete={handleIntroComplete} />
       )}
 
       {/* GLOBAL EFFECT 1: Ambient Background Animation */}
@@ -137,12 +142,8 @@ export default function App() {
       {/* GLOBAL EFFECT 2: High-Performance Cursor Glow */}
       <CursorGlow />
 
-      {/* Main Content Area (Revealed after intro) */}
-      <div
-        className={`relative z-10 w-full transition-opacity duration-700 ease-out ${
-          introFinished ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-      >
+      {/* Main Content Area (Permanently accessible and fully rendered) */}
+      <div className="relative z-10 w-full">
         {viewMode === 'dashboard' && (
           <>
             {/* SECTION 1 — Hero / About */}
@@ -165,17 +166,19 @@ export default function App() {
 
         {viewMode === 'layout' && (
           <div className="min-h-screen pt-8 pb-20 px-4 sm:px-6 lg:px-8">
-            <HomeAIScreen
-              onBack={handleBackToDashboard}
-              roomsState={roomsState}
-              setRoomsState={setRoomsState}
-              preferences={preferences}
-              setPreferences={setPreferences}
-              transcriptHistory={transcriptHistory}
-              setTranscriptHistory={setTranscriptHistory}
-              currentWeather={currentWeather}
-              setCurrentWeather={setCurrentWeather}
-            />
+            <ErrorBoundary fallbackTitle="Home AI Command Center">
+              <HomeAIScreen
+                onBack={handleBackToDashboard}
+                roomsState={roomsState}
+                setRoomsState={setRoomsState}
+                preferences={preferences}
+                setPreferences={setPreferences}
+                transcriptHistory={transcriptHistory}
+                setTranscriptHistory={setTranscriptHistory}
+                currentWeather={currentWeather}
+                setCurrentWeather={setCurrentWeather}
+              />
+            </ErrorBoundary>
           </div>
         )}
       </div>

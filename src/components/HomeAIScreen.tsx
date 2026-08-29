@@ -8,6 +8,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft,
   Mic,
+  MicOff,
+  Square,
   Send,
   Sparkles,
   CloudRain,
@@ -25,6 +27,10 @@ import {
   AlertCircle,
   Box,
   Compass,
+  AudioWaveform,
+  Check,
+  RefreshCw,
+  Zap,
 } from 'lucide-react';
 import { VoiceOrb } from './VoiceOrb';
 import { ChatTranscript } from './ChatTranscript';
@@ -72,6 +78,7 @@ export function HomeAIScreen({
 }: HomeAIScreenProps) {
   const [activeTab, setActiveTab] = useState<'spatial' | 'voice' | 'preferences'>('spatial');
   const [orbState, setOrbState] = useState<OrbState>('idle');
+  const [isRecording, setIsRecording] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
   const [textInput, setTextInput] = useState('');
@@ -80,10 +87,20 @@ export function HomeAIScreen({
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [weatherTriggerNotice, setWeatherTriggerNotice] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0); // 0 to 100
+  const [recordDuration, setRecordDuration] = useState(0);
+  const [micPermission, setMicPermission] = useState<'prompt' | 'granted' | 'denied' | 'unknown'>('unknown');
 
   const recognitionRef = useRef<any>(null);
-  const pressTimeoutRef = useRef<any>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
   const accumulatedTranscriptRef = useRef<string>('');
+  const pressStartTimestampRef = useRef<number>(0);
+  const timerIntervalRef = useRef<any>(null);
 
   // Check API health / key presence
   useEffect(() => {
@@ -95,66 +112,18 @@ export function HomeAIScreen({
       .catch(() => {
         setHasApiKey(false);
       });
-  }, []);
 
-  // Initialize Speech Recognition
-  useEffect(() => {
+    // Check speech recognition support
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setSpeechSupported(false);
-      return;
     }
+  }, []);
 
-    try {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        setSpeechError(null);
-        setOrbState('listening');
-        accumulatedTranscriptRef.current = '';
-      };
-
-      recognition.onresult = (event: any) => {
-        let currentInterim = '';
-        let currentFinal = '';
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcriptPiece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            currentFinal += transcriptPiece + ' ';
-          } else {
-            currentInterim += transcriptPiece;
-          }
-        }
-
-        if (currentFinal) {
-          accumulatedTranscriptRef.current += currentFinal;
-        }
-
-        setInterimTranscript(currentInterim || accumulatedTranscriptRef.current);
-      };
-
-      recognition.onerror = (event: any) => {
-        console.warn('Speech Recognition notice:', event.error);
-        if (event.error === 'not-allowed') {
-          setSpeechError('Microphone access denied. You can type commands below.');
-        }
-      };
-
-      recognition.onend = () => {
-        // Handled in stop
-      };
-
-      recognitionRef.current = recognition;
-    } catch (e) {
-      console.warn('SpeechRecognition initialization error:', e);
-      setSpeechSupported(false);
-    }
-
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
+      stopAudioAnalysis();
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -162,8 +131,32 @@ export function HomeAIScreen({
           // ignore
         }
       }
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
     };
   }, []);
+
+  // Helper to stop audio stream & analysis
+  const stopAudioAnalysis = () => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch {
+        // ignore
+      }
+      audioContextRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    setAudioLevel(0);
+  };
 
   // Helper to speak AI responses if TTS is turned on
   const speakResponse = (text: string) => {
@@ -182,7 +175,10 @@ export function HomeAIScreen({
   // Process user transcript via server-side Gemini endpoint
   const processTranscript = async (rawText: string) => {
     const text = rawText.trim();
-    if (!text) return;
+    if (!text) {
+      setOrbState('idle');
+      return;
+    }
 
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -300,28 +296,292 @@ export function HomeAIScreen({
     }
   };
 
-  // Push-to-Talk Event Handlers
-  const handleStartListening = () => {
-    setIsPressed(true);
-    setSpeechError(null);
-    setInterimTranscript('');
-    accumulatedTranscriptRef.current = '';
+  // Process raw audio via server-side Gemini multimodal endpoint
+  const processAudioBlob = async (blob: Blob) => {
+    if (blob.size < 1000) {
+      setOrbState('idle');
+      return;
+    }
 
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (err) {
-        // If already started, ignore
-      }
-    } else {
-      setOrbState('listening');
+    setOrbState('thinking');
+    setInterimTranscript('Transcribing & analyzing spoken audio...');
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        try {
+          const result = reader.result as string;
+          const base64Data = result.split(',')[1];
+          const mimeType = blob.type.split(';')[0] || 'audio/webm';
+
+          const response = await fetch('/api/home-ai/process-audio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audioBase64: base64Data,
+              mimeType,
+              currentState: roomsState,
+              preferences,
+              currentWeather,
+            }),
+          });
+
+          const data = await response.json();
+          const spokenText = data.transcript || 'Spoken Audio Command';
+          const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          // 1. Add user's spoken words
+          const userMsg: TranscriptMessage = {
+            id: `msg-${Date.now()}-user`,
+            sender: 'user',
+            text: spokenText,
+            timestamp,
+          };
+          setTranscriptHistory((prev) => [...prev, userMsg]);
+
+          // 2. Handle commands
+          if (data.type === 'command' && data.deviceUpdates) {
+            setRoomsState((prev) => {
+              const next = { ...prev };
+              for (const [roomKey, roomUpdates] of Object.entries(data.deviceUpdates)) {
+                if (next[roomKey as keyof AllRoomsState]) {
+                  next[roomKey as keyof AllRoomsState] = {
+                    ...next[roomKey as keyof AllRoomsState],
+                    ...(roomUpdates as object),
+                  } as any;
+                }
+              }
+              return next;
+            });
+
+            const aiMsg: TranscriptMessage = {
+              id: `msg-${Date.now()}-ai`,
+              sender: 'ai',
+              text: data.message || 'Command executed.',
+              timestamp,
+              type: 'command',
+              deviceUpdates: data.deviceUpdates,
+            };
+            setTranscriptHistory((prev) => [...prev, aiMsg]);
+            speakResponse(aiMsg.text);
+          } else if (data.type === 'preference' && data.preference) {
+            const newPref: PreferenceRule = {
+              id: data.preference.id || `pref-${Date.now()}`,
+              ruleText: data.preference.ruleText || spokenText,
+              condition: data.preference.condition || 'rainy',
+              conditionDescription: data.preference.conditionDescription || 'Automated condition',
+              summary: data.preference.summary || `Execute custom automation for ${data.preference.condition}`,
+              deviceUpdates: data.preference.deviceUpdates || {},
+              createdAt: 'Just now',
+            };
+            setPreferences((prev) => [newPref, ...prev]);
+
+            const aiMsg: TranscriptMessage = {
+              id: `msg-${Date.now()}-ai`,
+              sender: 'ai',
+              text: data.message || `I've saved your preference: "${newPref.ruleText}".`,
+              timestamp,
+              type: 'preference',
+            };
+            setTranscriptHistory((prev) => [...prev, aiMsg]);
+            speakResponse(aiMsg.text);
+          } else {
+            const aiMsg: TranscriptMessage = {
+              id: `msg-${Date.now()}-ai`,
+              sender: 'ai',
+              text: data.message || "I've heard your voice command.",
+              timestamp,
+              type: 'chat',
+            };
+            setTranscriptHistory((prev) => [...prev, aiMsg]);
+            speakResponse(aiMsg.text);
+          }
+        } catch (e: any) {
+          console.error('Audio processing fetch failure:', e);
+          const aiErrMsg: TranscriptMessage = {
+            id: `msg-${Date.now()}-error`,
+            sender: 'ai',
+            text: 'I could not recognize your voice audio clearly. You can try speaking closer to the mic or typing your command.',
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            type: 'chat',
+          };
+          setTranscriptHistory((prev) => [...prev, aiErrMsg]);
+        } finally {
+          setOrbState('idle');
+          setInterimTranscript('');
+        }
+      };
+
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      console.error('FileReader error:', e);
+      setOrbState('idle');
+      setInterimTranscript('');
     }
   };
 
-  const handleStopListening = () => {
-    if (!isPressed) return;
-    setIsPressed(false);
+  // Start Recording Pipeline (MediaStream + Analyser + MediaRecorder + SpeechRecognition)
+  const startRecordingPipeline = async () => {
+    setSpeechError(null);
+    setInterimTranscript('');
+    accumulatedTranscriptRef.current = '';
+    audioChunksRef.current = [];
+    setRecordDuration(0);
 
+    try {
+      // 1. Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      mediaStreamRef.current = stream;
+      setMicPermission('granted');
+      setIsRecording(true);
+      setOrbState('listening');
+
+      // 2. Start Web Audio Analyser for live volume meter
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const audioCtx = new AudioContextClass();
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          const source = audioCtx.createMediaStreamSource(stream);
+          source.connect(analyser);
+
+          audioContextRef.current = audioCtx;
+          analyserRef.current = analyser;
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const updateLevel = () => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / dataArray.length;
+            const normalized = Math.min(100, Math.round((avg / 128) * 100));
+            setAudioLevel(normalized);
+            animFrameRef.current = requestAnimationFrame(updateLevel);
+          };
+          updateLevel();
+        }
+      } catch (e) {
+        console.warn('AudioContext visualization setup notice:', e);
+      }
+
+      // 3. Start MediaRecorder for backup direct audio capture
+      try {
+        let mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/webm';
+        }
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+        }
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = '';
+        }
+
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        recorder.start(150);
+        mediaRecorderRef.current = recorder;
+      } catch (e) {
+        console.warn('MediaRecorder notice:', e);
+      }
+
+      // 4. Start SpeechRecognition for real-time text transcription
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          if (recognitionRef.current) {
+            try {
+              recognitionRef.current.abort();
+            } catch {
+              // ignore
+            }
+          }
+
+          const recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'en-US';
+
+          recognition.onstart = () => {
+            setSpeechError(null);
+          };
+
+          recognition.onresult = (event: any) => {
+            let currentInterim = '';
+            let currentFinal = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcriptPiece = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                currentFinal += transcriptPiece + ' ';
+              } else {
+                currentInterim += transcriptPiece;
+              }
+            }
+
+            if (currentFinal) {
+              accumulatedTranscriptRef.current += currentFinal;
+            }
+
+            const activeDisplay = (currentInterim || accumulatedTranscriptRef.current).trim();
+            if (activeDisplay) {
+              setInterimTranscript(activeDisplay);
+            }
+          };
+
+          recognition.onerror = (event: any) => {
+            console.warn('SpeechRecognition event error:', event.error);
+            if (event.error === 'not-allowed') {
+              setSpeechError('Microphone access denied in browser settings.');
+            }
+          };
+
+          recognition.start();
+          recognitionRef.current = recognition;
+        } catch (e) {
+          console.warn('SpeechRecognition start failed:', e);
+        }
+      }
+
+      // 5. Start Duration Timer
+      timerIntervalRef.current = setInterval(() => {
+        setRecordDuration((prev) => prev + 1);
+      }, 1000);
+
+    } catch (err: any) {
+      console.error('Microphone request error:', err);
+      setMicPermission('denied');
+      setSpeechError('Microphone access blocked. Please allow mic permission in your browser or type commands below.');
+      setOrbState('idle');
+      setIsRecording(false);
+    }
+  };
+
+  // Stop Recording Pipeline & Process Intent
+  const stopRecordingPipeline = (cancel = false) => {
+    setIsRecording(false);
+    setIsPressed(false);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+
+    // Stop SpeechRecognition
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -330,16 +590,87 @@ export function HomeAIScreen({
       }
     }
 
-    // Give a short delay to let final speech recognition tokens settle
-    setTimeout(() => {
-      const finalRecorded = accumulatedTranscriptRef.current.trim() || interimTranscript.trim();
-      if (finalRecorded) {
-        processTranscript(finalRecorded);
-      } else {
-        setOrbState('idle');
-        setInterimTranscript('');
+    if (cancel) {
+      stopAudioAnalysis();
+      setOrbState('idle');
+      setInterimTranscript('');
+      accumulatedTranscriptRef.current = '';
+      audioChunksRef.current = [];
+      return;
+    }
+
+    // Stop MediaRecorder
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {
+        // ignore
       }
-    }, 350);
+    }
+
+    // Allow 280ms for final data chunks to arrive
+    setTimeout(() => {
+      const finalTranscript = (accumulatedTranscriptRef.current.trim() || interimTranscript.trim());
+
+      // If speech recognition transcribed text, process directly
+      if (finalTranscript && finalTranscript.length > 1) {
+        stopAudioAnalysis();
+        processTranscript(finalTranscript);
+        return;
+      }
+
+      // Otherwise, fallback to direct audio blob upload
+      const chunks = audioChunksRef.current;
+      if (chunks.length > 0) {
+        const mime = mediaRecorderRef.current?.mimeType || 'audio/webm';
+        const audioBlob = new Blob(chunks, { type: mime });
+        stopAudioAnalysis();
+
+        if (audioBlob.size > 2000) {
+          processAudioBlob(audioBlob);
+          return;
+        }
+      }
+
+      // No speech caught
+      stopAudioAnalysis();
+      setOrbState('idle');
+      setInterimTranscript('');
+      setSpeechError('No voice recognized. Try speaking into your microphone or selecting a quick action below.');
+      setTimeout(() => setSpeechError(null), 6000);
+    }, 280);
+  };
+
+  // Toggle Mode Click Handler
+  const handleToggleClick = () => {
+    if (orbState === 'thinking') return;
+
+    if (isRecording) {
+      stopRecordingPipeline(false);
+    } else {
+      startRecordingPipeline();
+    }
+  };
+
+  // Push-to-Talk Mouse Handlers (Optional Hold Mode)
+  const handleMouseDown = () => {
+    if (orbState === 'thinking') return;
+    pressStartTimestampRef.current = Date.now();
+    setIsPressed(true);
+    if (!isRecording) {
+      startRecordingPipeline();
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (!isPressed) return;
+    setIsPressed(false);
+    const holdDuration = Date.now() - pressStartTimestampRef.current;
+
+    // If held for more than 400ms, treat as push-to-talk release
+    if (holdDuration > 400 && isRecording) {
+      stopRecordingPipeline(false);
+    }
   };
 
   // Handle weather change simulation & apply matching stored preferences
@@ -689,40 +1020,92 @@ export function HomeAIScreen({
             <VoiceOrb
               state={orbState}
               interimTranscript={interimTranscript}
-              isPressed={isPressed}
+              isPressed={isPressed || isRecording}
               roomsState={roomsState}
+              audioLevel={audioLevel}
             />
 
-            {/* Unified Command Toolstrip: Push-to-Talk Button + Integrated Typed Command Input */}
-            <div className="w-full mt-6 pt-5 border-t border-slate-800/80 flex flex-col md:flex-row items-center gap-3">
-              {/* Push-to-Talk Microphone Button */}
-              <button
-                id="push-to-talk-btn"
-                onMouseDown={handleStartListening}
-                onMouseUp={handleStopListening}
-                onTouchStart={handleStartListening}
-                onTouchEnd={handleStopListening}
-                onMouseLeave={() => {
-                  if (isPressed) handleStopListening();
-                }}
-                disabled={orbState === 'thinking'}
-                className={`w-full md:w-auto px-6 py-3.5 rounded-xl font-mono text-xs sm:text-sm font-bold flex items-center justify-center gap-2.5 transition-all select-none cursor-pointer shrink-0 ${
-                  isPressed
-                    ? 'bg-amber-400 text-slate-950 shadow-lg scale-[0.98]'
-                    : orbState === 'thinking'
-                    ? 'bg-slate-800 text-amber-300 border border-amber-500/30 cursor-wait'
-                    : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md active:scale-95'
-                }`}
+            {/* Live Recording HUD when active */}
+            {isRecording && (
+              <motion.div
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="w-full max-w-xl mt-4 px-4 py-3 rounded-xl bg-sky-950/40 border border-sky-500/30 flex items-center justify-between gap-4"
               >
-                <Mic className="w-4 h-4" />
-                <span>
-                  {isPressed
-                    ? 'Release to Send'
-                    : orbState === 'thinking'
-                    ? 'Processing...'
-                    : 'Hold to Speak'}
-                </span>
-              </button>
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-rose-500 animate-ping" />
+                  <div>
+                    <div className="text-xs font-mono font-bold text-sky-200">
+                      RECORDING ACTIVE ({Math.floor(recordDuration / 60)}:{String(recordDuration % 60).padStart(2, '0')})
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Speak naturally — say a room command or preference rule
+                    </div>
+                  </div>
+                </div>
+
+                {/* Real-time decibel volume gauge */}
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-400">Input:</span>
+                  <div className="w-20 h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-emerald-400 via-amber-400 to-rose-400 transition-all duration-75"
+                      style={{ width: `${Math.max(5, audioLevel)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-sky-300 w-7 text-right">
+                    {audioLevel}%
+                  </span>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Unified Command Toolstrip: Microphone Controls + Text Input */}
+            <div className="w-full mt-5 pt-5 border-t border-slate-800/80 flex flex-col md:flex-row items-center gap-3">
+              {/* Primary Microphone Trigger Controls */}
+              <div className="w-full md:w-auto flex items-center gap-2">
+                {!isRecording ? (
+                  <button
+                    id="push-to-talk-btn"
+                    onClick={handleToggleClick}
+                    onMouseDown={handleMouseDown}
+                    onMouseUp={handleMouseUp}
+                    onTouchStart={handleMouseDown}
+                    onTouchEnd={handleMouseUp}
+                    disabled={orbState === 'thinking'}
+                    className={`w-full md:w-auto px-6 py-3.5 rounded-xl font-mono text-xs sm:text-sm font-bold flex items-center justify-center gap-2.5 transition-all select-none cursor-pointer shrink-0 ${
+                      orbState === 'thinking'
+                        ? 'bg-slate-800 text-amber-300 border border-amber-500/30 cursor-wait'
+                        : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md hover:shadow-amber-500/20 active:scale-95'
+                    }`}
+                    title="Click to start listening, or hold to speak"
+                  >
+                    <Mic className="w-4 h-4" />
+                    <span>
+                      {orbState === 'thinking' ? 'Processing Voice...' : 'Click to Speak'}
+                    </span>
+                  </button>
+                ) : (
+                  <div className="w-full md:w-auto flex items-center gap-2">
+                    <button
+                      id="voice-stop-send-btn"
+                      onClick={() => stopRecordingPipeline(false)}
+                      className="flex-1 md:flex-initial px-5 py-3.5 rounded-xl font-mono text-xs sm:text-sm font-bold flex items-center justify-center gap-2 bg-emerald-400 hover:bg-emerald-300 text-slate-950 shadow-md cursor-pointer transition-all active:scale-95"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-current" />
+                      <span>Finish & Send</span>
+                    </button>
+                    <button
+                      id="voice-cancel-btn"
+                      onClick={() => stopRecordingPipeline(true)}
+                      className="px-3.5 py-3.5 rounded-xl font-mono text-xs text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 cursor-pointer transition-colors"
+                      title="Discard audio"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
 
               {/* Integrated Text Input Field */}
               <form
@@ -740,15 +1123,15 @@ export function HomeAIScreen({
                   type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
-                  placeholder="Type any zone instruction or rule (e.g. Close windows when it rains)..."
-                  disabled={orbState === 'thinking'}
+                  placeholder="Or type a command (e.g. 'Turn on dining chandelier', 'Close doors when it rains')..."
+                  disabled={orbState === 'thinking' || isRecording}
                   className="flex-1 bg-transparent px-3 py-1.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:outline-none"
                 />
                 <button
                   id="voice-text-command-submit"
                   type="submit"
-                  disabled={!textInput.trim() || orbState === 'thinking'}
-                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
+                  disabled={!textInput.trim() || orbState === 'thinking' || isRecording}
+                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 cursor-pointer"
                   title="Send Command"
                 >
                   <span>Execute</span>
@@ -757,26 +1140,36 @@ export function HomeAIScreen({
               </form>
             </div>
 
+            {/* Error or status notifications */}
             {speechError && (
-              <div className="mt-3 flex items-center gap-1.5 text-xs text-rose-400 font-medium">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                <span>{speechError}</span>
+              <div className="mt-3 w-full p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/30 flex items-center justify-between gap-2 text-xs text-rose-300 font-medium">
+                <div className="flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                  <span>{speechError}</span>
+                </div>
+                <button
+                  onClick={() => startRecordingPipeline()}
+                  className="px-2 py-0.5 rounded text-[11px] bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/30 cursor-pointer font-mono"
+                >
+                  Retry Mic
+                </button>
               </div>
             )}
 
             {/* Quick Action Shortcuts */}
             <div className="w-full mt-4 flex flex-wrap items-center justify-start gap-2 pt-3 border-t border-slate-800/40 text-xs">
-              <span className="text-slate-400 font-mono text-[11px] mr-1">Quick actions:</span>
+              <span className="text-slate-400 font-mono text-[11px] mr-1">Quick voice commands:</span>
               {[
                 'Close doors and windows when it rains',
                 'Lock all exterior doors',
                 'Turn on dining chandelier',
                 'Set living room AC to 68',
+                'Turn off bedroom fans',
               ].map((sample, idx) => (
                 <button
                   key={idx}
                   onClick={() => handleSamplePrompt(sample)}
-                  disabled={orbState === 'thinking'}
+                  disabled={orbState === 'thinking' || isRecording}
                   className="px-2.5 py-1 rounded-md text-[11px] bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
                 >
                   {sample}
